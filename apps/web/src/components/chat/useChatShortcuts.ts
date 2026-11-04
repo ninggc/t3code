@@ -11,7 +11,12 @@ import { isInSideChatPane } from "../../lib/sideChatPane";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
-import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
+import { registerCommands } from "../../shortcuts/dispatcher";
+import {
+  eventPathContainsSelector,
+  shouldTypeToFocusComposer,
+  TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
+} from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
 /** Returning false lets the key event through untouched. */
@@ -25,8 +30,8 @@ export type ChatShortcutCommands = Partial<Record<KeybindingCommand, ChatShortcu
 interface ChatShortcutsInput {
   readonly enabled: boolean;
   /**
-   * A side chat inside another chat leaves the window to the outer chat. It runs only
-   * composer chords, for keys pressed inside `composerElement`.
+   * A side chat runs composer chords inside `composerElement` and handles unclaimed
+   * Escape only from its own pane. Other window shortcuts belong to the outer chat.
    */
   readonly embedded?: boolean;
   readonly composerElement?: HTMLElement | null;
@@ -40,13 +45,14 @@ interface ChatShortcutsInput {
   readonly composerRef: ComposerHandleRef;
   readonly branchToolbarRef: { readonly current: BranchToolbarHandle | null };
   readonly closeThreadFind: () => void;
+  readonly focusComposer: () => void;
   readonly commands: ChatShortcutCommands;
   /** Handles commands not in `commands`, such as project scripts. */
   readonly fallback: (command: KeybindingCommand) => ChatShortcutHandler | undefined;
 }
 
 /**
- * The chat's window keyboard shortcuts, plus Escape closing thread find.
+ * The chat's window keyboard shortcuts and unclaimed Escape returning composer focus.
  * Listeners attach once; the effect events read the latest input, so handlers
  * act on the current render without re-registering on every change.
  */
@@ -110,6 +116,41 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.preventDefault();
     input.closeThreadFind();
   });
+  const focusOnEscape = useEffectEvent((event: KeyboardEvent, consumed: boolean) => {
+    if (
+      consumed ||
+      event.defaultPrevented ||
+      event.key !== "Escape" ||
+      event.repeat ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.shiftKey ||
+      input.threadFindActive ||
+      (!embedded && !input.enabled) ||
+      isCommandPaletteOpen()
+    )
+      return;
+    if (embedded) {
+      const pane = composerElement?.closest("[data-side-chat-pane]");
+      if (!(event.target instanceof Node) || !pane?.contains(event.target)) return;
+    } else if (isInSideChatPane(event.target)) return;
+    const context = input.getShortcutContext(event.target);
+    if (
+      context.composerFocus ||
+      context.modelPickerOpen ||
+      document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) ||
+      eventPathContainsSelector(
+        event,
+        '[role="dialog"], [role="alertdialog"], dialog[open], [role="menu"], [role="listbox"], [data-keybinding-capture]',
+      )
+    )
+      return;
+    event.preventDefault();
+    input.focusComposer();
+  });
   const handleComposerShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || isCommandPaletteOpen()) return;
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
@@ -122,19 +163,24 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.preventDefault();
     event.stopPropagation();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, or on an embedded chat's composer
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes shortcut listeners and observes unclaimed Escape after command scopes run
   useEffect(() => {
+    const stopEscape = registerCommands({}, { observe: focusOnEscape });
     if (embedded) {
-      if (composerElement === null) return;
+      if (composerElement === null) return stopEscape;
       const onComposerKeyDown = (event: KeyboardEvent) => handleComposerShortcut(event);
       composerElement.addEventListener("keydown", onComposerKeyDown, true);
-      return () => composerElement.removeEventListener("keydown", onComposerKeyDown, true);
+      return () => {
+        stopEscape();
+        composerElement.removeEventListener("keydown", onComposerKeyDown, true);
+      };
     }
     const onKeyDownCapture = (event: KeyboardEvent) => handleShortcut(event);
     const onKeyDown = (event: KeyboardEvent) => dismissFind(event);
     window.addEventListener("keydown", onKeyDownCapture, true);
     window.addEventListener("keydown", onKeyDown);
     return () => {
+      stopEscape();
       window.removeEventListener("keydown", onKeyDownCapture, true);
       window.removeEventListener("keydown", onKeyDown);
     };

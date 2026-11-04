@@ -1,5 +1,5 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
-import { workspaceAreaProps } from "../lib/workspaceFocus";
+import { requestWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
@@ -2698,6 +2698,14 @@ export default function ChatView(props: ChatViewProps) {
     branchToolbarRef,
     closeThreadFind: () => {
       closeThreadFind();
+      focusComposerStable();
+    },
+    focusComposer: () => {
+      if (rightPanelMaximized) {
+        useRightPanelStore.getState().setMaximized(routeThreadRef, false);
+        requestWorkspaceFocus({ area: "composer", selector: '[data-testid="composer-editor"]' });
+        return;
+      }
       focusComposerStable();
     },
     commands: {

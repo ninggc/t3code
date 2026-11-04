@@ -1,10 +1,11 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { useChatShortcuts, type ChatShortcutCommands } from "./useChatShortcuts";
@@ -72,6 +73,7 @@ function Chat(props: {
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
+    focusComposer: () => {},
     commands: props.commands ?? {},
     fallback: () => undefined,
   });
@@ -178,6 +180,7 @@ function SideChat(props: {
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
+    focusComposer: () => {},
     commands: {
       "thread.stop": () => void props.stops.push("stop"),
       "terminal.toggle": () => void props.terminalToggles?.push("side"),
@@ -273,3 +276,257 @@ it.each([
     expect(toggles).toEqual(["model"]);
   },
 );
+
+function EscapeChat(props: {
+  name?: string;
+  embedded?: boolean;
+  enabled?: boolean;
+  findActive?: boolean;
+  modelPickerOpen?: boolean;
+  events?: string[];
+  children?: ReactNode;
+}) {
+  const name = props.name ?? "Main";
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
+  const focusComposer = () => {
+    props.events?.push(`focus:${name}`);
+    editor.current?.focus();
+    editor.current?.setSelectionRange(editor.current.value.length, editor.current.value.length);
+  };
+  useChatShortcuts({
+    enabled: props.embedded ? false : (props.enabled ?? true),
+    embedded: props.embedded === true,
+    composerElement,
+    keybindings: [],
+    scriptKeybindings: [],
+    getShortcutContext: (target) => ({
+      ...shortcutContext,
+      composerFocus: target === editor.current,
+      modelPickerOpen: props.modelPickerOpen ?? false,
+    }),
+    threadFindActive: props.findActive ?? false,
+    composerRef: { current: null },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {
+      props.events?.push(`find:${name}`);
+      focusComposer();
+    },
+    focusComposer,
+    commands: {},
+    fallback: () => undefined,
+  });
+  return (
+    <section data-side-chat-pane={props.embedded ? "" : undefined}>
+      <button type="button" aria-label={`${name} messages`}>
+        Messages
+      </button>
+      <div ref={setComposerElement}>
+        <textarea ref={editor} aria-label={`${name} composer`} defaultValue={`Draft ${name}`} />
+      </div>
+      {props.children}
+    </section>
+  );
+}
+
+it.each(["Messages", "Threads sidebar", "Right panel", "Terminal toolbar"])(
+  "returns an unhandled Escape from %s to the composer and keeps the draft",
+  async (area) => {
+    await using screen = await render(
+      <EscapeChat>
+        <button type="button">{area}</button>
+      </EscapeChat>,
+      options,
+    );
+    await userEvent.click(screen.getByRole("button", { name: area, exact: true }));
+    await userEvent.keyboard("{Escape}!");
+
+    await expect.element(screen.getByLabelText("Main composer")).toHaveFocus();
+    await expect.element(screen.getByLabelText("Main composer")).toHaveValue("Draft Main!");
+  },
+);
+
+it("keeps Escape local to the targeted side chat among multiple composers", async () => {
+  const events: string[] = [];
+  await using screen = await render(
+    <EscapeChat events={events}>
+      <EscapeChat name="Side A" embedded events={events} />
+      <EscapeChat name="Side B" embedded events={events} />
+    </EscapeChat>,
+    options,
+  );
+
+  await userEvent.click(screen.getByLabelText("Side B messages"));
+  await userEvent.keyboard("{Escape}!");
+  await expect.element(screen.getByLabelText("Side B composer")).toHaveFocus();
+  await expect.element(screen.getByLabelText("Side B composer")).toHaveValue("Draft Side B!");
+  await expect.element(screen.getByLabelText("Main composer")).toHaveValue("Draft Main");
+  await expect.element(screen.getByLabelText("Side A composer")).toHaveValue("Draft Side A");
+  expect(events).toEqual(["focus:Side B"]);
+
+  await userEvent.click(screen.getByLabelText("Main messages"));
+  await userEvent.keyboard("{Escape}");
+  await expect.element(screen.getByLabelText("Main composer")).toHaveFocus();
+  expect(events).toEqual(["focus:Side B", "focus:Main"]);
+});
+
+it("leaves locally consumed Escape to the terminal or editor", async () => {
+  const consumed: string[] = [];
+  const events: string[] = [];
+  await using screen = await render(
+    <EscapeChat events={events}>
+      <textarea
+        aria-label="Terminal input"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          consumed.push("terminal");
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      />
+      <textarea
+        aria-label="File editor"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          consumed.push("editor");
+          event.preventDefault();
+        }}
+      />
+    </EscapeChat>,
+    options,
+  );
+
+  await userEvent.click(screen.getByLabelText("Terminal input"));
+  await userEvent.keyboard("{Escape}");
+  await expect.element(screen.getByLabelText("Terminal input")).toHaveFocus();
+  await userEvent.click(screen.getByLabelText("File editor"));
+  await userEvent.keyboard("{Escape}");
+  await expect.element(screen.getByLabelText("File editor")).toHaveFocus();
+  expect(consumed).toEqual(["terminal", "editor"]);
+  expect(events).toEqual([]);
+});
+
+it("lets global command scopes claim Escape before returning focus", async () => {
+  const events: string[] = [];
+  await using screen = await render(<EscapeChat events={events} />, options);
+  using _scope = {
+    [Symbol.dispose]: registerCommands(
+      {},
+      {
+        onKeyDown: (event) => {
+          if (event.key !== "Escape") return false;
+          events.push("scope");
+        },
+      },
+    ),
+  };
+  await userEvent.click(screen.getByLabelText("Main messages"));
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(screen.getByLabelText("Main messages")).toHaveFocus();
+  expect(events).toEqual(["scope"]);
+});
+
+it.each(["dialog", "menu", "listbox"])(
+  "keeps Escape inside a %s even when its handler does not prevent default",
+  async (role) => {
+    const events: string[] = [];
+    await using screen = await render(
+      <EscapeChat events={events}>
+        <div role={role}>
+          <button type="button">Popup control</button>
+        </div>
+      </EscapeChat>,
+      options,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Popup control" }));
+    await userEvent.keyboard("{Escape}");
+
+    await expect.element(screen.getByRole("button", { name: "Popup control" })).toHaveFocus();
+    expect(events).toEqual([]);
+  },
+);
+
+it("keeps an open modal's priority and ignores a closed popup", async () => {
+  const events: string[] = [];
+  await using screen = await render(
+    <EscapeChat events={events}>
+      <div role="dialog" aria-modal="true">
+        Open modal
+      </div>
+    </EscapeChat>,
+    options,
+  );
+  await userEvent.click(screen.getByLabelText("Main messages"));
+  await userEvent.keyboard("{Escape}");
+  expect(events).toEqual([]);
+
+  await screen.rerender(
+    <EscapeChat events={events}>
+      <div data-slot="dialog-popup" hidden>
+        Closed popup
+      </div>
+    </EscapeChat>,
+  );
+  await userEvent.keyboard("{Escape}");
+  await expect.element(screen.getByLabelText("Main composer")).toHaveFocus();
+  expect(events).toEqual(["focus:Main"]);
+});
+
+it("closes thread find and focuses the composer exactly once", async () => {
+  const events: string[] = [];
+  await using screen = await render(<EscapeChat findActive events={events} />, options);
+  await userEvent.click(screen.getByLabelText("Main messages"));
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(screen.getByLabelText("Main composer")).toHaveFocus();
+  expect(events).toEqual(["find:Main", "focus:Main"]);
+});
+
+it("keeps the caret when the composer already has focus", async () => {
+  const events: string[] = [];
+  await using screen = await render(<EscapeChat events={events} />, options);
+  const composer = screen.getByLabelText("Main composer");
+  await userEvent.click(composer);
+  (composer.element() as HTMLTextAreaElement).setSelectionRange(2, 2);
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(composer).toHaveFocus();
+  expect((composer.element() as HTMLTextAreaElement).selectionStart).toBe(2);
+  expect(events).toEqual([]);
+});
+
+it.each([
+  { isComposing: true },
+  { keyCode: 229 },
+  { repeat: true },
+  { ctrlKey: true },
+  { metaKey: true },
+  { altKey: true },
+  { shiftKey: true },
+])("leaves Escape with $0 alone", async (flags) => {
+  const events: string[] = [];
+  await using screen = await render(<EscapeChat events={events} />, options);
+  const messages = screen.getByLabelText("Main messages");
+  await userEvent.click(messages);
+  messages
+    .element()
+    .dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, ...flags }),
+    );
+
+  await expect.element(messages).toHaveFocus();
+  expect(events).toEqual([]);
+});
+
+it("ignores background chats and an open model picker", async () => {
+  const events: string[] = [];
+  await using screen = await render(<EscapeChat enabled={false} events={events} />, options);
+  await userEvent.click(screen.getByLabelText("Main messages"));
+  await userEvent.keyboard("{Escape}");
+  await screen.rerender(<EscapeChat modelPickerOpen events={events} />);
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(screen.getByLabelText("Main messages")).toHaveFocus();
+  expect(events).toEqual([]);
+});
