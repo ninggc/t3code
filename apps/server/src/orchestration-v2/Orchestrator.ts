@@ -3544,6 +3544,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
+    const inheritedRuntimeMode =
+      command.type === "thread.runtime-mode.set" &&
+      thread.lineage.sideChat === true &&
+      thread.lineage.parentThreadId !== null
+        ? (yield* getProjectionWithPendingEvents(thread.lineage.parentThreadId, events)).thread
+            .runtimeMode
+        : undefined;
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
@@ -3983,7 +3990,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }
             : thread;
         case "thread.runtime-mode.set":
-          return { ...thread, runtimeMode: command.runtimeMode, updatedAt: now };
+          return {
+            ...thread,
+            runtimeMode: inheritedRuntimeMode ?? command.runtimeMode,
+            updatedAt: now,
+          };
         case "thread.interaction-mode.set":
           return { ...thread, interactionMode: command.interactionMode, updatedAt: now };
         case "thread.model-selection.set":
@@ -13226,11 +13237,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request.watch":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
-      case "thread.runtime-mode.set":
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
+        break;
+      case "thread.runtime-mode.set":
+        yield* dispatchThreadMutation(command, events, effects);
+        for (const threadId of sideChatIds) {
+          if ((yield* findThread(threadId))?.deletedAt !== null) continue;
+          yield* dispatchThreadMutation({ ...command, threadId }, events, effects);
+        }
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
@@ -13496,7 +13513,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
-  /** `sideChatIds` are the live side chats a `thread.delete` cascades to, read under their locks. */
+  /** Side chats included in a parent's deletion or permission change, read under their locks. */
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId> = [],
@@ -13765,7 +13782,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? dispatch
         : threadDispatch.withLock(command.sourceThreadId, dispatch);
     }
-    if (command.type === "thread.delete")
+    if (command.type === "thread.delete" || command.type === "thread.runtime-mode.set")
       return yield* threadDispatch.withLock(
         command.threadId,
         liveSideChatIds(command.threadId).pipe(

@@ -3,6 +3,8 @@ import type { UnifiedSettings } from "@t3tools/contracts";
 import type { Dispatch } from "react";
 import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { threadEnvironment } from "../../state/threads";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -54,7 +56,7 @@ interface ComposerSelectionInput {
 }
 
 /**
- * The composer's choices for the next turn: provider and model, runtime and interaction mode,
+ * The composer's provider and model, runtime and interaction mode,
  * and where a new thread runs (local or a new worktree, from the remote's tip or not).
  */
 export function useComposerSelection(input: ComposerSelectionInput) {
@@ -89,12 +91,19 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     (store) => store.setInteractionMode,
   );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const setThreadRuntimeMode = useOrchestrationCommand(threadEnvironment.setRuntimeMode);
 
-  const handleRuntimeModeChange = (mode: RuntimeMode) => {
-    if (mode === runtimeMode) return;
-    setComposerDraftRuntimeMode(composerDraftTarget, mode);
+  const handleRuntimeModeChange = async (mode: RuntimeMode) => {
+    if (mode === runtimeMode || activeThread?.lineage.sideChat === true) return;
     if (isLocalDraftThread) {
+      setComposerDraftRuntimeMode(composerDraftTarget, mode);
       setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
+    } else if (activeThread) {
+      const result = await setThreadRuntimeMode({
+        environmentId,
+        input: { threadId: activeThread.id, runtimeMode: mode },
+      });
+      if (result._tag === "Success") setComposerDraftRuntimeMode(composerDraftTarget, null);
     }
     scheduleComposerFocus();
   };
