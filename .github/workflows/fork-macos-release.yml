@@ -1,0 +1,147 @@
+name: Fork macOS Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-macos-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.repository == 'ninggc/t3code' &&
+      github.event.repository.private == false &&
+      github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      T3CODE_TELEMETRY_CHANNEL: dev
+      T3CODE_DESKTOP_SIGNED: "false"
+    steps:
+      # Anonymous checkout avoids credential cleanup traversing orphaned .repos gitlinks.
+      - name: Checkout
+        env:
+          CHECKOUT_REF: ${{ github.sha }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout --detach FETCH_HEAD
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Resolve release version
+        id: version
+        run: |
+          set -euo pipefail
+          base_version="$(node -p "require('./apps/desktop/package.json').version")"
+          version="${base_version}-preview.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=mac-v$version" >> "$GITHUB_OUTPUT"
+          cp .env.example .env
+
+      - name: Build unsigned macOS arm64 app
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: vp run dist:desktop:dmg:arm64 --build-version "$RELEASE_VERSION" --verbose
+
+      - name: Check packaged app starts
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/desktop-launch-dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" release/*.dmg
+          trap 'hdiutil detach "$mount" -force >/dev/null || true' EXIT
+          apps=("$mount"/*.app)
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${apps[0]}/Contents/Info.plist")
+          node scripts/smoke-desktop-app.ts \
+            --executable "${apps[0]}/Contents/MacOS/$executable" \
+            --artifacts-dir "$RUNNER_TEMP/desktop-launch-check"
+
+      - name: Upload launch failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-launch-failure
+          path: ${{ runner.temp }}/desktop-launch-check
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Collect installers and checksums
+        run: |
+          set -euo pipefail
+          mkdir release-publish
+          cp release/*.dmg release/*.zip release-publish/
+          cd release-publish
+          shasum -a 256 ./*.dmg ./*.zip > SHA256SUMS
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-arm64-release
+          path: release-publish/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: macos-arm64-release
+          path: release-publish
+
+      - name: Publish fork release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd release-publish
+          sha256sum --check SHA256SUMS
+          cd ..
+          cat > release-notes.md <<EOF
+          macOS arm64 build for Apple Silicon Macs, without Developer ID signing or notarization.
+
+          Source commit: ${GITHUB_SHA}
+          Install using the DMG or ZIP. SHA256SUMS contains the download checksums.
+          This preview is installed manually and does not configure automatic app updates.
+          EOF
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-publish/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" release-publish/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Mac arm64 $RELEASE_VERSION" \
+              --notes-file release-notes.md \
+              --prerelease --latest=false
+          fi
