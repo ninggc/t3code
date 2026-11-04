@@ -10,6 +10,16 @@ See [Keybindings](./keybindings.md) to customize these shortcuts.
 If you return to typing while a terminal is starting, the composer keeps focus when the terminal
 becomes ready. Opening or switching to a terminal explicitly still focuses it.
 
+## Return to the message input
+
+On web and desktop, press `Esc` from the conversation, sidebar, or a panel to return to the
+current chat's message input. Your draft stays intact. A maximized right panel returns to its
+normal size so the input is visible; panels and terminals stay open. Inside a side chat,
+`Esc` returns to that side chat's input.
+
+Dialogs, menus, search, and editors handle `Esc` first. Terminal input still sends `Esc` to
+the shell; an unhandled `Esc` from its toolbar returns to the message input.
+
 ## Move between workspace areas
 
 On web and desktop, press `F6` or `Shift+F6` to move between the Threads sidebar,
