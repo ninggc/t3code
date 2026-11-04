@@ -14,6 +14,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeMode,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -873,6 +874,69 @@ const askSideChat = (
     });
   });
 
+it.effect.each(RuntimeMode.literals)(
+  "side chats inherit %s and follow subsequent parent permission changes",
+  (runtimeMode) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const parentId = ThreadId.make("side-chat-permission-parent");
+      const sideChatId = ThreadId.make("side-chat-permission-child");
+      const unusedId = ThreadId.make("side-chat-permission-unused");
+      const forkId = ThreadId.make("side-chat-permission-plain-fork");
+      yield* createParent(parentId);
+      yield* writeParentRun({
+        threadId: parentId,
+        runId: RunId.make("side-chat-permission-parent-run"),
+        ordinal: 1,
+        status: "completed",
+        text: "Parent context",
+        stable: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("side-chat-permission-initial"),
+        threadId: parentId,
+        runtimeMode,
+      });
+      yield* forkSideChat("side-chat-permission-fork", parentId, sideChatId);
+      yield* forkSideChat("side-chat-permission-unused-fork", parentId, unusedId);
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("side-chat-permission-plain-fork"),
+        sourceThreadId: parentId,
+        targetThreadId: forkId,
+        sourcePoint: { type: "latest_stable" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal((yield* orchestrator.getThreadShell(sideChatId))?.runtimeMode, runtimeMode);
+      yield* askSideChat(sideChatId, "side-chat-permission-first-message");
+
+      for (const [index, nextMode] of [...RuntimeMode.literals].reverse().entries()) {
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make(`side-chat-permission-change-${index}`),
+          threadId: parentId,
+          runtimeMode: nextMode,
+        });
+        for (const threadId of [sideChatId, unusedId]) {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(projection.thread.runtimeMode, nextMode);
+          assert.equal((yield* orchestrator.getThreadShell(threadId))?.runtimeMode, nextMode);
+        }
+        // A stale client cannot override the inherited permission on a side chat.
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make(`side-chat-permission-stale-${index}`),
+          threadId: sideChatId,
+          runtimeMode,
+        });
+        assert.equal((yield* orchestrator.getThreadShell(sideChatId))?.runtimeMode, nextMode);
+        assert.equal((yield* orchestrator.getThreadShell(forkId))?.runtimeMode, runtimeMode);
+      }
+    }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("resolves an explicit checkpoint fork to its source run", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1110,7 +1174,7 @@ it.effect("a side chat opened during the parent's first turn starts from a diges
     yield* fork("side-chat-busy-fork", parentId, sideChatId);
     const created = yield* orchestrator.getThreadProjection(sideChatId);
     assert.isTrue(created.thread.lineage.sideChat);
-    assert.equal(created.thread.runtimeMode, "approval-required");
+    assert.equal(created.thread.runtimeMode, "full-access");
     assert.isNull(created.thread.forkedFrom);
     assert.deepEqual(created.contextTransfers[0]?.sourcePoint, { threadId: parentId });
 
