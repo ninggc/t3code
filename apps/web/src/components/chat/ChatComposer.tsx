@@ -919,7 +919,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
   const managedPolicy = useManagedPolicy(environmentId);
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
-    compatibleRuntimeModes,
+    props.activeThreadShell?.lineage.sideChat === true
+      ? [compatibleRuntimeMode]
+      : compatibleRuntimeModes,
     managedPolicy,
   );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.

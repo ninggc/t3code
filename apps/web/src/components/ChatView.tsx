@@ -937,9 +937,11 @@ export default function ChatView(props: ChatViewProps) {
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
   const runtimeMode =
-    composerRuntimeMode ??
-    (isServerThread ? activeThread?.runtimeMode : undefined) ??
-    defaultRuntimeMode;
+    activeThread?.lineage.sideChat === true
+      ? (sideChatParent?.runtimeMode ?? activeThread.runtimeMode)
+      : (composerRuntimeMode ??
+        (isServerThread ? activeThread?.runtimeMode : undefined) ??
+        defaultRuntimeMode);
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -2770,6 +2772,7 @@ export default function ChatView(props: ChatViewProps) {
     serverConfig?.environment.capabilities.sideChats === true;
   const sideChat = useSideChat({
     threadRef: sideChatsOffered && isServerThread ? activeThreadRef : null,
+    runtimeMode,
     onError: (message) => {
       if (activeThread) setThreadError(activeThread.id, message);
     },

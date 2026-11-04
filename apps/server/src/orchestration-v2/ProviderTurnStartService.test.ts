@@ -17,6 +17,7 @@ import {
   ProviderSetupError,
   RunAttemptId,
   RunId,
+  RuntimeMode,
   ThreadId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
@@ -299,6 +300,7 @@ function makeLocalCommandHarness(input: {
    * parent. `switchedProvider` puts the earlier run and its context on another provider thread.
    */
   readonly sideChat?: {
+    readonly runtimeMode?: RuntimeMode;
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly nativeForkFrom?: "idle" | "busy";
     readonly switchedProvider?: boolean;
@@ -566,7 +568,7 @@ function makeLocalCommandHarness(input: {
       ...projection,
       thread: {
         ...projection.thread,
-        runtimeMode: "full-access",
+        runtimeMode: input.sideChat.runtimeMode ?? "full-access",
         lineage: {
           parentThreadId,
           relationshipToParent: "fork",
@@ -1259,30 +1261,37 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
   }),
 );
 
-effectIt.effect.each([
-  { contextRun: "current", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "failed", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  { contextRun: "cancelled", runtimeMode: "approval-required", context: "SIDE_CHAT_CONTEXT" },
-  {
-    contextRun: "failed",
-    switchedProvider: true,
-    runtimeMode: "approval-required",
-    context: "SIDE_CHAT_CONTEXT",
-  },
-  { contextRun: "delivered", runtimeMode: "full-access", context: "" },
-] as const)(
+effectIt.effect.each(
+  RuntimeMode.literals.flatMap(
+    (runtimeMode) =>
+      [
+        { contextRun: "current", runtimeMode, context: "SIDE_CHAT_CONTEXT" },
+        { contextRun: "failed", runtimeMode, context: "SIDE_CHAT_CONTEXT" },
+        { contextRun: "cancelled", runtimeMode, context: "SIDE_CHAT_CONTEXT" },
+        {
+          contextRun: "failed",
+          switchedProvider: true,
+          runtimeMode,
+          context: "SIDE_CHAT_CONTEXT",
+        },
+        { contextRun: "delivered", runtimeMode, context: "" },
+      ] as const,
+  ),
+)(
   "sends side chat context inline once, for the first turn that reaches the provider: %j",
   ({ runtimeMode, context, ...sideChat }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "What is the main thread doing?",
-        sideChat,
+        sideChat: { ...sideChat, runtimeMode },
       });
 
       yield* harness.start;
 
-      // The turn that delivers the context is clamped; a later one follows the thread's mode.
       expect(harness.open).toHaveBeenCalledWith(
+        expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
+      );
+      expect(harness.startRootRun).toHaveBeenCalledWith(
         expect.objectContaining({ runtimePolicy: expect.objectContaining({ runtimeMode }) }),
       );
       expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([

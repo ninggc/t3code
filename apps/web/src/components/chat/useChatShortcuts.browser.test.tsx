@@ -1,13 +1,14 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
-import { useChatShortcuts } from "./useChatShortcuts";
+import { useChatShortcuts, type ChatShortcutCommands } from "./useChatShortcuts";
 
 const shortcutContext = {
   terminalFocus: false,
@@ -48,10 +49,16 @@ function Launcher(props: { keys: string; received: string[] }) {
 
 // The chat's shortcut listener registers when the chat mounts, so a launcher that opens
 // later registers after it. Tests mount the chat first and add the launcher by rerendering.
-function Chat(props: { composerKeys: string[]; launcher?: { keys: string; received: string[] } }) {
+function Chat(props: {
+  composerKeys: string[];
+  launcher?: { keys: string; received: string[] };
+  keybindings?: ResolvedKeybindingsConfig;
+  commands?: ChatShortcutCommands;
+  children?: ReactNode;
+}) {
   useChatShortcuts({
     enabled: true,
-    keybindings: [],
+    keybindings: props.keybindings ?? [],
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
@@ -67,10 +74,15 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
     focusComposer: () => {},
-    commands: {},
+    commands: props.commands ?? {},
     fallback: () => undefined,
   });
-  return props.launcher ? <Launcher {...props.launcher} /> : null;
+  return (
+    <>
+      {props.launcher ? <Launcher {...props.launcher} /> : null}
+      {props.children}
+    </>
+  );
 }
 
 // router: false because the chat shortcuts and the launcher stand-in never navigate.
@@ -146,13 +158,18 @@ const sideChatKeybindings: ResolvedKeybindingsConfig = [
 ];
 
 // A side chat in the main chat's panel: no window listeners, only its composer's own chords.
-function SideChat(props: { toggles: string[]; stops: string[] }) {
+function SideChat(props: {
+  toggles: string[];
+  stops: string[];
+  terminalToggles?: string[];
+  keybindings?: ResolvedKeybindingsConfig;
+}) {
   const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
   useChatShortcuts({
     enabled: false,
     embedded: true,
     composerElement,
-    keybindings: sideChatKeybindings,
+    keybindings: props.keybindings ?? sideChatKeybindings,
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
@@ -164,13 +181,21 @@ function SideChat(props: { toggles: string[]; stops: string[] }) {
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
     focusComposer: () => {},
-    commands: { "thread.stop": () => void props.stops.push("stop") },
+    commands: {
+      "thread.stop": () => void props.stops.push("stop"),
+      "terminal.toggle": () => void props.terminalToggles?.push("side"),
+    },
     fallback: () => undefined,
   });
   return (
     <>
-      <div ref={setComposerElement}>
-        <textarea aria-label="Side chat composer" />
+      <div data-side-chat-pane>
+        <div ref={setComposerElement}>
+          <textarea aria-label="Side chat composer" />
+        </div>
+        <div tabIndex={0} aria-label="Side chat messages">
+          Side chat messages
+        </div>
       </div>
       <textarea aria-label="Main composer" />
     </>
@@ -190,6 +215,67 @@ it("runs a side chat's composer chords only from its composer, and never thread 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
 });
+
+it.each([
+  { platform: "MacIntel", chord: "{Meta>}j{/Meta}", custom: false },
+  { platform: "Linux x86_64", chord: "{Control>}j{/Control}", custom: false },
+  { platform: "MacIntel", chord: "{Control>}{Shift>}J{/Shift}{/Control}", custom: true },
+])(
+  "toggles the main terminal from the side chat on $platform (custom: $custom)",
+  async ({ platform, chord, custom }) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    const keybindings = [
+      ...DEFAULT_RESOLVED_KEYBINDINGS,
+      ...sideChatKeybindings,
+      ...(custom ? [ctrlShift("j", "terminal.toggle")] : []),
+    ];
+    const composerKeys: string[] = [];
+    const toggles: string[] = [];
+    const stops: string[] = [];
+    const sideTerminalToggles: string[] = [];
+    const terminalStates: boolean[] = [];
+    let terminalOpen = false;
+    await using screen = await render(
+      <Chat
+        composerKeys={composerKeys}
+        keybindings={keybindings}
+        commands={{
+          "terminal.toggle": () => {
+            terminalOpen = !terminalOpen;
+            terminalStates.push(terminalOpen);
+          },
+          "thread.stop": () => void stops.push("main"),
+          "modelPicker.toggle": () => void toggles.push("main"),
+        }}
+      >
+        <SideChat
+          toggles={toggles}
+          stops={stops}
+          terminalToggles={sideTerminalToggles}
+          keybindings={keybindings}
+        />
+      </Chat>,
+      options,
+    );
+
+    await userEvent.click(screen.getByLabelText("Side chat composer"));
+    await userEvent.keyboard(chord);
+    expect(terminalStates).toEqual([true]);
+
+    await userEvent.click(screen.getByLabelText("Side chat messages"));
+    await userEvent.keyboard(chord);
+    expect(terminalStates).toEqual([true, false]);
+
+    await userEvent.keyboard("a{Control>}{Shift>}X{/Shift}{/Control}");
+    await userEvent.click(screen.getByLabelText("Side chat composer"));
+    await userEvent.keyboard("{Control>}{Shift>}MX{/Shift}{/Control}");
+
+    expect(sideTerminalToggles).toEqual([]);
+    expect(composerKeys).toEqual([]);
+    expect(stops).toEqual([]);
+    expect(toggles).toEqual(["model"]);
+  },
+);
 
 function EscapeChat(props: {
   name?: string;
