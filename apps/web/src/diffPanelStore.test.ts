@@ -1,10 +1,11 @@
-import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { EnvironmentId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   resolveToolCallDiffTarget,
+  selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "./diffPanelStore";
@@ -16,6 +17,44 @@ describe("diffPanelStore", () => {
       branchBaseRefByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+  });
+
+  it("uses the configured default only until a thread has a saved selection", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const selection = () =>
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, ref, "unstaged");
+    expect(selection()).toEqual({ kind: "unstaged" });
+    expect(selection()).toBe(selection());
+    expect(useDiffPanelStore.getState().byThreadKey).toEqual({});
+
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(ref, "main");
+    expect(selection()).toEqual({ kind: "branch", baseRef: "main" });
+    store.selectGitScope(ref, "unstaged");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, ref, "branch"),
+    ).toEqual({ kind: "unstaged" });
+    store.selectCommit(ref, "abc");
+    expect(selection()).toEqual({ kind: "commit", sha: "abc", baseRef: "main" });
+    store.selectTurn(ref, RunId.make("turn"), "file.ts");
+    expect(selection()).toMatchObject({ kind: "turn", turnId: "turn", filePath: "file.ts" });
+    const target = { threadId: ref.threadId, itemId: TurnItemId.make("edit"), revision: "1" };
+    store.selectToolCall(ref, target);
+    expect(selection()).toEqual({ kind: "tool-call", ...target });
+
+    expect(
+      selectThreadDiffPanelSelection(
+        useDiffPanelStore.getState().byThreadKey,
+        { ...ref, environmentId: EnvironmentId.make("other") },
+        "unstaged",
+      ),
+    ).toEqual({ kind: "unstaged" });
+    store.removeThread(ref);
+    expect(selection()).toEqual({ kind: "unstaged" });
+    expect(selectThreadDiffPanelSelection({}, ref, "branch")).toEqual({
+      kind: "branch",
+      baseRef: null,
+    });
   });
 
   it("keeps a tool call selection independent of checkpoints and allows returning to Git changes", () => {

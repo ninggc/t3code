@@ -215,6 +215,7 @@ export default function DiffPanel({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
+    diffDefaultScope: settings.diffDefaultScope,
     timestampFormat: settings.timestampFormat,
     wordWrap: settings.wordWrap,
   }));
@@ -268,7 +269,7 @@ export default function DiffPanel({
       : null,
   );
   const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
+    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef, settings.diffDefaultScope),
   );
   const rememberedBaseRef = useDiffPanelStore((state) =>
     selectThreadBranchBaseRef(state, routeThreadRef),

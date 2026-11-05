@@ -311,6 +311,19 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings default diff range", () => {
+  it("keeps Changes for older settings and round-trips the configured range", () => {
+    expect(decodeClientSettings({}).diffDefaultScope).toBe("branch");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("diffDefaultScope");
+    for (const diffDefaultScope of ["branch", "unstaged"]) {
+      const patch = decodeClientSettingsPatch({ diffDefaultScope });
+      const stored = JSON.parse(JSON.stringify(encodeClientSettings(decodeClientSettings(patch))));
+      expect(decodeClientSettings(stored).diffDefaultScope).toBe(diffDefaultScope);
+    }
+    expect(() => decodeClientSettingsPatch({ diffDefaultScope: "unknown" })).toThrow();
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],
