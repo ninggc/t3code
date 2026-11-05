@@ -2,7 +2,7 @@ name: Fork macOS Release
 
 on:
   push:
-    branches: [main]
+    branches: [custom]
   workflow_dispatch:
 
 permissions:
@@ -17,7 +17,7 @@ jobs:
     if: >-
       github.repository == 'ninggc/t3code' &&
       github.event.repository.private == false &&
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/custom'
     runs-on: macos-15
     timeout-minutes: 60
     outputs:
