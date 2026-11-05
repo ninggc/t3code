@@ -40,6 +40,20 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("snooze preset settings", () => {
+  it.each([1, 30, 31, 365])("persists and patches a %i day duration", (days) => {
+    const snoozePresets = [{ kind: "after", minutes: days * 24 * 60 }];
+    expect(decodeServerSettings({ snoozePresets }).snoozePresets).toEqual(snoozePresets);
+    expect(decodeServerSettingsPatch({ snoozePresets }).snoozePresets).toEqual(snoozePresets);
+  });
+
+  it.each([0, 366])("rejects a %i day duration", (days) => {
+    const snoozePresets = [{ kind: "after", minutes: days * 24 * 60 }];
+    expect(() => decodeServerSettings({ snoozePresets })).toThrow();
+    expect(() => decodeServerSettingsPatch({ snoozePresets })).toThrow();
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

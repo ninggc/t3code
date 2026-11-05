@@ -88,11 +88,32 @@ const failedThread = (failedAgoMs: number, resetAgoMs: number) => {
     pendingRuntimeRequest: null,
     limitRecovery: null,
     snoozedUntil: null,
+    snoozedAt: null,
   };
   return candidate;
 };
 
 describe("limitRecoveryCommand arming", () => {
+  it("never arms or resumes Never snoozed threads", () => {
+    const thread = { ...failedThread(6 * HOUR_MS, HOUR_MS), snoozedAt: DateTime.makeUnsafe(0) };
+    assert.isNull(limitRecoveryCommand(thread, true, nowMs, true));
+    assert.isNull(
+      limitRecoveryCommand(
+        {
+          ...thread,
+          limitRecovery: {
+            runId: thread.latestRunId!,
+            resetAt: thread.usageLimitResetAt!,
+            autoResume: true,
+            snooze: false,
+          },
+        },
+        true,
+        nowMs,
+      ),
+    );
+  });
+
   it("does not freshly arm a failure whose reset passed days ago", () => {
     const thread = failedThread(5 * 24 * HOUR_MS, 4 * 24 * HOUR_MS);
     assert.isNull(limitRecoveryCommand(thread, true, nowMs));

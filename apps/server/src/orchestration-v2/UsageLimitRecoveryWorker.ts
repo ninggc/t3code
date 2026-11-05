@@ -27,7 +27,8 @@ export function limitRecoveryCommand(
     !thread.usageLimitResetAt ||
     thread.archivedAt !== null ||
     thread.settledOverride === "settled" ||
-    thread.pendingRuntimeRequest !== null
+    thread.pendingRuntimeRequest !== null ||
+    (thread.snoozedUntil == null && thread.snoozedAt != null)
   )
     return null;
   const resetMs = Date.parse(thread.usageLimitResetAt);

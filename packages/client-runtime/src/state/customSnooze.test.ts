@@ -19,6 +19,8 @@ describe("custom snooze", () => {
     ["minutes", "45", 45 * 60_000],
     ["hours", "1.5", 90 * 60_000],
     ["days", "2", 48 * 3_600_000],
+    ["days", "1", 24 * 3_600_000],
+    ["days", "365", 365 * 24 * 3_600_000],
   ] as const)("resolves %s from the confirmation time", (unit, amount, elapsed) => {
     const confirmedAt = new Date(now.getTime() + 5 * 60_000);
     expect(resolveCustomSnooze({ mode: "duration", amount, unit }, confirmedAt)).toBe(
@@ -28,6 +30,10 @@ describe("custom snooze", () => {
 
   it.each(["0", "NaN", "1e300"])("rejects invalid duration %s", (amount) => {
     expect(resolveCustomSnooze({ mode: "duration", amount, unit: "hours" }, now)).toBeNull();
+  });
+
+  it.each(["0.5", "1.5", "366"])("rejects days outside the integer range 1–365: %s", (amount) => {
+    expect(resolveCustomSnooze({ mode: "duration", amount, unit: "days" }, now)).toBeNull();
   });
 
   it("rejects nonexistent local times at the spring DST transition", () => {

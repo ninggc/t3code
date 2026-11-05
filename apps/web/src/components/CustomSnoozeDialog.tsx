@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { MAX_SNOOZE_PRESET_MINUTES } from "@t3tools/contracts/settings";
 import { useNavigate } from "@tanstack/react-router";
 import { create } from "zustand";
 import {
@@ -95,7 +96,9 @@ function CustomSnoozeDialog() {
               setError(
                 mode === "date"
                   ? "Choose a valid date and time in the future."
-                  : "Enter a positive duration.",
+                  : unit === "days"
+                    ? "Enter a whole number of days from 1 to 365."
+                    : "Enter a positive duration.",
               );
               return;
             }
@@ -180,8 +183,9 @@ function CustomSnoozeDialog() {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <NumberField
                       id={`${id}-amount`}
-                      min={0}
-                      step="any"
+                      min={unit === "days" ? 1 : 0}
+                      max={unit === "days" ? MAX_SNOOZE_PRESET_MINUTES / (24 * 60) : undefined}
+                      step={unit === "days" ? 1 : "any"}
                       value={amount === "" ? null : Number(amount)}
                       onValueChange={(value) => {
                         setAmount(value === null ? "" : String(value));

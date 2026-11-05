@@ -255,6 +255,7 @@ describe("remote thread lifecycle commands", () => {
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],
     ["snooze", { snoozedUntil: "2099-01-01T00:00:00.000Z" }, { snoozedUntil: FUTURE }],
+    ["snooze", { snoozedUntil: null }, { snoozedUntil: null, snoozedAt: expect.any(Object) }],
     ["unsnooze", { reason: "user" }, { snoozedUntil: null, snoozedAt: null }],
     ["pin", { orderKey: "a" }, { pinnedAt: expect.any(Object), pinOrderKey: "a" }],
     ["unpin", {}, { pinnedAt: null, pinOrderKey: null }],

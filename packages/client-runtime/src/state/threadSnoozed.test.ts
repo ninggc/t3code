@@ -10,6 +10,7 @@ import {
   hasQueuedTurnStart,
   pickSnoozePreset,
   resolveSnoozePresets,
+  snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   isThreadWokeUnseen,
@@ -72,6 +73,20 @@ function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTu
 }
 
 describe("effectiveSnoozed", () => {
+  it("keeps Never snoozed through requests, failures and time passing until restored", () => {
+    for (const activity of [
+      {},
+      { pending: "approval" as const },
+      { pending: "user-input" as const },
+      { sessionStatus: "error" as const },
+    ]) {
+      const shell = makeShell({ snoozedUntil: null, snoozedAt: SNOOZED_AT, ...activity });
+      expect(effectiveSnoozed(shell, { now: "2030-01-01T00:00:00.000Z" })).toBe(true);
+      expect(threadWokeAt(shell, { now: "2030-01-01T00:00:00.000Z" })).toBeNull();
+      expect(effectiveSnoozed({ ...shell, snoozedAt: null }, { now: NOW })).toBe(false);
+    }
+  });
+
   it("never hides on malformed wake data", () => {
     expect(effectiveSnoozed(makeShell({ snoozedUntil: "not-a-date" }), { now: NOW })).toBe(false);
   });
@@ -290,8 +305,8 @@ describe("resolveSnoozePresets", () => {
   const formatTime = (date: Date) =>
     `${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
   const menu = (now: Date, presets?: ReadonlyArray<SnoozePresetSetting>) =>
-    resolveSnoozePresets(now, { formatTime, ...(presets ? { presets } : {}) }).map(
-      (preset) => `${preset.label} ${preset.whenLabel}`,
+    resolveSnoozePresets(now, { formatTime, ...(presets ? { presets } : {}) }).map((preset) =>
+      `${preset.label} ${preset.whenLabel}`.trim(),
     );
 
   it("lists custom presets soonest first and names the day when the label does not", () => {
@@ -303,7 +318,13 @@ describe("resolveSnoozePresets", () => {
         { kind: "after", minutes: 360 },
         { kind: "after", minutes: 180 },
       ]),
-    ).toEqual(["In 3 hours 23:00", "In 6 hours Thu 2:00", "Tomorrow 21:00", "Next week Mon 18:00"]);
+    ).toEqual([
+      "In 3 hours 23:00",
+      "In 6 hours Thu 2:00",
+      "Tomorrow 21:00",
+      "Next week Mon 18:00",
+      "Never",
+    ]);
   });
 
   it("drops a today preset once its time passes and moves a weekday on that day to next week", () => {
@@ -315,8 +336,8 @@ describe("resolveSnoozePresets", () => {
         { kind: "at", day: "monday", time: "09:00" },
       ],
     });
-    expect(presets.map((preset) => preset.id)).toEqual(["at:monday:09:00"]);
-    expect(new Date(presets[0]!.snoozedUntil)).toEqual(localDate(2026, 4, 20, 9));
+    expect(presets.map((preset) => preset.id)).toEqual(["at:monday:09:00", "never"]);
+    expect(presets[0]!.snoozedUntil).toEqual(localDate(2026, 4, 20, 9).toISOString());
   });
 
   it("names the real day gap: a Monday option on Sunday is Tomorrow, a weekday a week out is Next", () => {
@@ -330,12 +351,14 @@ describe("resolveSnoozePresets", () => {
       "Tomorrow 18:00",
       "Tomorrow 21:00",
       "Friday 17:00",
+      "Never",
     ]);
     // Friday 10:00: today's 17:00 is a week away.
     expect(menu(localDate(2026, 9, 4, 10), theo)).toEqual([
       "Tomorrow 21:00",
       "Next week Mon 18:00",
       "Next Friday 17:00",
+      "Never",
     ]);
   });
 
@@ -346,6 +369,7 @@ describe("resolveSnoozePresets", () => {
       "In 3 hours 10:01",
       "This evening 18:00",
       "Tomorrow 9:00",
+      "Never",
     ]);
   });
 
@@ -357,11 +381,30 @@ describe("resolveSnoozePresets", () => {
         { kind: "after", minutes: 180 },
         { kind: "at", day: "today", time: "18:00" },
       ]),
-    ).toEqual(["In 3 hours 18:00"]);
+    ).toEqual(["In 3 hours 18:00", "Never"]);
   });
 });
 
 describe("pickSnoozePreset", () => {
+  it("always offers Never and keeps it selectable after the menu was opened", () => {
+    const shown = resolveSnoozePresets(localDate(2026, 4, 8, 15), { presets: [] });
+    expect(shown).toContainEqual({
+      id: "never",
+      label: "Never",
+      whenLabel: "",
+      snoozedUntil: null,
+    });
+    expect(
+      pickSnoozePreset({ shown, id: "never", now: localDate(2030, 4, 8, 15), presets: [] }),
+    ).toEqual(shown[0]);
+    expect(snoozeWakeLabel(null, { now: NOW })).toBe("Never");
+    const annual = resolveSnoozePresets(new Date(NOW), {
+      presets: [{ kind: "after", minutes: 365 * 24 * 60 }],
+    })[0]!;
+    expect(annual.label).toBe("In 365 days");
+    expect(snoozeWakeLabel(annual.snoozedUntil, { now: NOW })).toBe("365d");
+  });
+
   it("starts a duration when it is picked, even when the menu merged it with a set time", () => {
     const presets: ReadonlyArray<SnoozePresetSetting> = [
       { kind: "at", day: "today", time: "18:30" },

@@ -1460,6 +1460,59 @@ it.effect("replays a thread.create receipt without changing the thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("persists Never snooze in thread and shell reads until manually restored", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:snooze-never");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-snooze-never"),
+      threadId,
+      projectId: ProjectId.make("project:snooze-never"),
+      title: "Never snoozed thread",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const snoozedAt = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.settle",
+      commandId: CommandId.make("settle-before-snooze-never"),
+      threadId,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.snooze",
+      commandId: CommandId.make("snooze-never"),
+      threadId,
+      snoozedUntil: null,
+    });
+    yield* TestClock.adjust("366 days");
+    const expected = { snoozedUntil: null, snoozedAt, settledOverride: null, settledAt: null };
+    assert.deepInclude(yield* projections.getThread(threadId), expected);
+    assert.deepInclude(yield* projections.getThreadShell(threadId), expected);
+    assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, expected);
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.unsnooze",
+      commandId: CommandId.make("restore-snooze-never"),
+      threadId,
+      reason: "user",
+    });
+    const restored = { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now, updatedAt: now };
+    assert.deepInclude(yield* projections.getThreadShell(threadId), {
+      snoozedUntil: null,
+      snoozedAt: null,
+      updatedAt: now,
+    });
+    assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, restored);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("explicit settle clears snooze atomically and stays idempotent after re-snoozing", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

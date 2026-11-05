@@ -166,6 +166,14 @@ describe("isAutoSettlementCandidate", () => {
       snoozedAt: at(-60 * 60 * 1_000),
     });
     expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
+    const never = shell({
+      ...snoozed,
+      snoozedUntil: null,
+      status: "failed",
+      latestRunCompletedAt: at(-30 * 60 * 1_000),
+    });
+    expect(ThreadSettlementService.isSnoozed(never, NOW_MS + 366 * DAY_MS)).toBe(true);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(never, NOW_MS)).toBe(false);
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),

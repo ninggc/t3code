@@ -158,7 +158,9 @@ export function CustomSnoozeSheet(props: {
                   setError(
                     mode === "date"
                       ? "Choose a date and time in the future."
-                      : "Enter a positive duration.",
+                      : unit === "days"
+                        ? "Enter a whole number of days from 1 to 365."
+                        : "Enter a positive duration.",
                   );
                   return;
                 }

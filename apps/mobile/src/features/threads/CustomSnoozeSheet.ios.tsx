@@ -1,4 +1,5 @@
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { MAX_SNOOZE_PRESET_MINUTES } from "@t3tools/contracts/settings";
 import {
   DatePicker,
   Host,
@@ -37,7 +38,10 @@ import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
-const durationAmounts = Array.from({ length: 99 }, (_, index) => index + 1);
+const durationAmounts = Array.from(
+  { length: MAX_SNOOZE_PRESET_MINUTES / (24 * 60) },
+  (_, index) => index + 1,
+);
 const SnoozeStack = createNativeStackNavigator<{ CustomSnooze: undefined }>();
 const modes = [
   { value: "date", label: "Date and time" },
@@ -75,7 +79,11 @@ export function CustomSnoozeSheet(props: {
     const snoozedUntil = resolveCustomSnooze(input, new Date());
     if (!snoozedUntil) {
       setError(
-        mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration.",
+        mode === "date"
+          ? "Choose a date and time in the future."
+          : unit === "days"
+            ? "Enter a whole number of days from 1 to 365."
+            : "Enter a positive duration.",
       );
       return;
     }
@@ -159,20 +167,23 @@ export function CustomSnoozeSheet(props: {
                         clipped(),
                       ]}
                     >
-                      {durationAmounts.map((value) => (
-                        <Text
-                          key={value}
-                          modifiers={[tag(value), foregroundStyle(colors["--color-foreground"])]}
-                        >
-                          {String(value)}
-                        </Text>
-                      ))}
+                      {(unit === "days" ? durationAmounts : durationAmounts.slice(0, 99)).map(
+                        (value) => (
+                          <Text
+                            key={value}
+                            modifiers={[tag(value), foregroundStyle(colors["--color-foreground"])]}
+                          >
+                            {String(value)}
+                          </Text>
+                        ),
+                      )}
                     </Picker>
                     <Picker
                       label="Duration unit"
                       selection={unit}
                       onSelectionChange={(value: typeof unit) => {
                         setUnit(value);
+                        if (value !== "days") setAmount((current) => Math.min(99, current));
                         setError(null);
                       }}
                       modifiers={[
