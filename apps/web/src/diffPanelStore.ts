@@ -1,7 +1,13 @@
 import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { RunId, ScopedThreadRef, ThreadId, TurnItemId } from "@t3tools/contracts";
+import type {
+  DiffDefaultScope,
+  RunId,
+  ScopedThreadRef,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -20,19 +26,19 @@ export type DiffPanelSelection =
   | { kind: "commit"; sha: string; baseRef: string | null }
   | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
 
-const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
+const DEFAULT_SELECTIONS: Record<DiffDefaultScope, DiffPanelSelection> = {
+  branch: { kind: "branch", baseRef: null },
+  unstaged: { kind: "unstaged" },
+};
 
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
-  /** A link that selected a commit before opening the closed pane; opening keeps that selection. */
-  keepSelectionOnOpenThreadKey: string | null;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
-  selectCommit: (ref: ScopedThreadRef, sha: string, keepOnOpen?: boolean) => void;
-  consumeKeepSelectionOnOpen: (ref: ScopedThreadRef) => boolean;
+  selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -54,10 +60,9 @@ function branchBaseRef(
 
 export const useDiffPanelStore = create<DiffPanelStoreState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
-      keepSelectionOnOpenThreadKey: null,
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -115,7 +120,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             },
           };
         }),
-      selectCommit: (ref, sha, keepOnOpen = false) =>
+      selectCommit: (ref, sha) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const baseRef = branchBaseRef(state, threadKey);
@@ -125,16 +130,8 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
               [threadKey]: { kind: "commit", sha, baseRef },
             },
             branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: baseRef },
-            keepSelectionOnOpenThreadKey: keepOnOpen
-              ? threadKey
-              : state.keepSelectionOnOpenThreadKey,
           };
         }),
-      consumeKeepSelectionOnOpen: (ref) => {
-        if (get().keepSelectionOnOpenThreadKey !== scopedThreadKey(ref)) return false;
-        set({ keepSelectionOnOpenThreadKey: null });
-        return true;
-      },
       reconcileTurnSelection: (ref, availableTurnIds) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -206,9 +203,10 @@ export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((se
 export function selectThreadDiffPanelSelection(
   byThreadKey: Record<string, DiffPanelSelection>,
   ref: ScopedThreadRef | null | undefined,
+  defaultScope: DiffDefaultScope = "branch",
 ): DiffPanelSelection {
-  if (!ref) return DEFAULT_SELECTION;
-  return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+  if (!ref) return DEFAULT_SELECTIONS[defaultScope];
+  return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTIONS[defaultScope];
 }
 
 export function selectThreadBranchBaseRef(

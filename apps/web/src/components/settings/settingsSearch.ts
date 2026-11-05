@@ -559,6 +559,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["diff ignore spaces edits default"],
   },
   {
+    id: "default-diff-range",
+    title: "Default diff range",
+    to: "/settings/diffs",
+    searchTerms: ["scope comparison changes branch uncommitted unstaged initial"],
+  },
+  {
     id: "default-diff-file-state",
     title: "Default diff file state",
     to: "/settings/diffs",

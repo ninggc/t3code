@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import {
   DEFAULT_UNIFIED_SETTINGS,
+  DiffDefaultScope,
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
@@ -137,6 +138,12 @@ const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
   split: "Split",
 };
+
+const DIFF_DEFAULT_SCOPE_LABELS: Record<DiffDefaultScope, string> = {
+  branch: "Changes",
+  unstaged: "Uncommitted",
+};
+const isDiffDefaultScope = Schema.is(DiffDefaultScope);
 
 const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
   direct: "Direct",
@@ -515,6 +522,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Diff whitespace changes"]
       : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
+    ...(settings.diffDefaultScope !== DEFAULT_UNIFIED_SETTINGS.diffDefaultScope
+      ? ["Default diff range"]
+      : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? ["Open pull requests and changes panels proactively"]
       : []),
@@ -637,6 +647,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
+      diffDefaultScope: DEFAULT_UNIFIED_SETTINGS.diffDefaultScope,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -1293,6 +1304,40 @@ export function DiffsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="diffs" title="Diffs">
+        <SettingsRow
+          {...searchableSetting("default-diff-range")}
+          description="Choose the initial range for threads without a saved selection. Each thread keeps its last selection; links to a turn, commit, or tool change open that target."
+          resetAction={
+            settings.diffDefaultScope !== DEFAULT_UNIFIED_SETTINGS.diffDefaultScope ? (
+              <SettingResetButton
+                label="default diff range"
+                onClick={() =>
+                  updateSettings({ diffDefaultScope: DEFAULT_UNIFIED_SETTINGS.diffDefaultScope })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.diffDefaultScope}
+              onValueChange={(value) => {
+                if (isDiffDefaultScope(value)) updateSettings({ diffDefaultScope: value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Default diff range">
+                <SelectValue>{DIFF_DEFAULT_SCOPE_LABELS[settings.diffDefaultScope]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="branch">
+                  {DIFF_DEFAULT_SCOPE_LABELS.branch}
+                </SelectItem>
+                <SelectItem hideIndicator value="unstaged">
+                  {DIFF_DEFAULT_SCOPE_LABELS.unstaged}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
         <SettingsRow
           {...searchableSetting("diff-layout")}
           description="Show diffs stacked or side by side. The toggle in the diff toolbar changes this too."
