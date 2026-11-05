@@ -48,7 +48,10 @@ export function idleCompactionWindow(
 } | null {
   if (thread.deletedAt !== null || thread.archivedAt !== null) return null;
   if (thread.settledAt !== null || thread.settledOverride === "settled") return null;
-  if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
+  if (
+    (thread.snoozedUntil == null && thread.snoozedAt != null) ||
+    (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
+  )
     return null;
   if (!isListedThreadLineage(thread.lineage)) return null;
   // A removed or steered queued message leaves a cancelled run that never started.

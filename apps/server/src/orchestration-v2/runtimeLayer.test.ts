@@ -7996,6 +7996,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     "queued-resume",
     "rearm",
     "snooze-race",
+    "never-snooze-race",
     "archive",
     "replacement",
     "manual-snooze",
@@ -8352,17 +8353,36 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       );
       if (autoResume && scenario !== "cancel-resume-keep-snooze") assert.isNotNull(resume);
       else assert.isNull(resume);
-      if (scenario === "snooze-race") {
-        const wakeAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
+      if (scenario === "snooze-race" || scenario === "never-snooze-race") {
+        const wakeAt =
+          scenario === "never-snooze-race"
+            ? null
+            : DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
         yield* orchestrator.dispatch({
           type: "thread.snooze",
-          commandId: CommandId.make("recovery:raced-snooze"),
+          commandId: CommandId.make(`recovery:raced-snooze:${scenario}`),
           threadId,
           snoozedUntil: wakeAt,
         });
         yield* orchestrator.dispatch(resume!);
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
         yield* TestClock.adjust("1 minute");
+        if (scenario === "never-snooze-race") {
+          const sleeping = (yield* orchestrator.getShellSnapshot()).threads.find(
+            (thread) => thread.id === threadId,
+          )!;
+          assert.isNull(sleeping.snoozedUntil);
+          assert.isNotNull(sleeping.snoozedAt);
+          assert.isNull(
+            limitRecoveryCommand(sleeping, true, DateTime.toEpochMillis(yield* DateTime.now)),
+          );
+          yield* orchestrator.dispatch({
+            type: "thread.unsnooze",
+            commandId: CommandId.make("recovery:raced-never-wake"),
+            threadId,
+            reason: "user",
+          });
+        }
         const current = (yield* orchestrator.getShellSnapshot()).threads.find(
           (thread) => thread.id === threadId,
         )!;

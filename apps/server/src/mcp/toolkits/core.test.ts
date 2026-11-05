@@ -514,6 +514,15 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     );
     expect(pinned.isError).toBe(false);
     expect(pinned.structuredContent).toMatchObject({ sequence: 7 });
+    for (const snoozedUntil of [null, "2099-01-01T00:00:00.000Z"]) {
+      const snoozed = yield* call(
+        "t3_thread_organize",
+        { action: "snooze", threadId: "other-project-thread", snoozedUntil },
+        clientScope("auto"),
+      );
+      expect(snoozed.isError).toBe(false);
+      expect(snoozed.structuredContent).toMatchObject({ sequence: 7 });
+    }
 
     const aboveCeiling = yield* call(
       "t3_thread_organize",

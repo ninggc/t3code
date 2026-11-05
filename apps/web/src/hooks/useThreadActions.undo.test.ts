@@ -50,6 +50,7 @@ const threadShell = vi.hoisted(() => ({
   pinOrderKey: "a0",
   pinnedAt: null as string | null,
   snoozedUntil: null as string | null,
+  snoozedAt: null as string | null,
   projectId: "project",
   environmentId: "undo-env",
   session: null,
@@ -108,6 +109,7 @@ beforeEach(() => {
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
+  threadShell.snoozedAt = null;
   shellLoaded.current = true;
 });
 afterEach(() => {
@@ -140,23 +142,27 @@ describe("concurrent thread action Undo", () => {
 });
 
 describe("unpin Undo", () => {
-  it("restores the original snooze after restoring the pin", async () => {
-    threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
-    threadShell.snoozedUntil = "2030-01-01T09:00:00.000Z";
-    await useThreadActions().unpinThread(target);
-    await currentUndo()();
-    expect(commands.pin).toHaveBeenCalledExactlyOnceWith({
-      environmentId: target.environmentId,
-      input: { threadId: target.threadId, orderKey: "a0" },
-    });
-    expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
-      environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil: threadShell.snoozedUntil },
-    });
-    expect(commands.pin.mock.invocationCallOrder[0]).toBeLessThan(
-      commands.snooze.mock.invocationCallOrder[0]!,
-    );
-  });
+  it.each(["2030-01-01T09:00:00.000Z", null])(
+    "restores the original snooze %s after restoring the pin",
+    async (snoozedUntil) => {
+      threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
+      threadShell.snoozedUntil = snoozedUntil;
+      threadShell.snoozedAt = "2026-01-01T00:00:00.000Z";
+      await useThreadActions().unpinThread(target);
+      await currentUndo()();
+      expect(commands.pin).toHaveBeenCalledExactlyOnceWith({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, orderKey: "a0" },
+      });
+      expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, snoozedUntil: threadShell.snoozedUntil },
+      });
+      expect(commands.pin.mock.invocationCallOrder[0]).toBeLessThan(
+        commands.snooze.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
 
   it("restores the pin without an already expired snooze", async () => {
     threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";

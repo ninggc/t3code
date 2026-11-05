@@ -1,6 +1,10 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
-import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_SNOOZE_PRESETS,
+  MAX_SNOOZE_PRESET_MINUTES,
+  type SnoozePresetSetting,
+} from "@t3tools/contracts/settings";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 
@@ -138,7 +142,8 @@ export function effectiveSnoozed(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): boolean {
-  if (shell.snoozedUntil == null) return false;
+  // A stored snooze without a deadline is Never; only a manual action clears it.
+  if (shell.snoozedUntil == null) return shell.snoozedAt != null;
   const wakeAtMs = Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return false;
   if (wakeAtMs <= Date.parse(options.now)) return false;
@@ -187,7 +192,7 @@ export interface SnoozePreset {
   readonly id: string;
   readonly label: string;
   readonly whenLabel: string;
-  readonly snoozedUntil: string;
+  readonly snoozedUntil: string | null;
 }
 
 export interface SnoozePresetOptions {
@@ -254,7 +259,7 @@ export function resolveSnoozePreset(
   setting: SnoozePresetSetting,
   now: Date,
   formatTime: (date: Date) => string = snoozeTimeOfDayLabel,
-): SnoozePreset | null {
+): (SnoozePreset & { readonly snoozedUntil: string }) | null {
   let wake: Date;
   let daysAhead = 0;
   if (setting.kind === "after") {
@@ -288,10 +293,11 @@ export function resolveSnoozePresets(
 ): ReadonlyArray<SnoozePreset> {
   // By minute, so a duration (which keeps the clock's seconds) and a set time in the same
   // minute tie, and the stable sort keeps whichever comes first in settings.
-  const wakeMinute = (preset: SnoozePreset) => Math.floor(Date.parse(preset.snoozedUntil) / 60_000);
+  const wakeMinute = (preset: { readonly snoozedUntil: string }) =>
+    Math.floor(Date.parse(preset.snoozedUntil) / 60_000);
   const seen = new Set<number>();
-  return (
-    (options.presets ?? DEFAULT_SNOOZE_PRESETS)
+  return [
+    ...(options.presets ?? DEFAULT_SNOOZE_PRESETS)
       .flatMap((setting) => resolveSnoozePreset(setting, now, options.formatTime) ?? [])
       // flatMap returned a new array; Hermes has no `toSorted`.
       .sort((a, b) => wakeMinute(a) - wakeMinute(b))
@@ -299,8 +305,9 @@ export function resolveSnoozePresets(
         if (seen.has(wakeMinute(preset))) return false;
         seen.add(wakeMinute(preset));
         return true;
-      })
-  );
+      }),
+    { id: "never", label: "Never", whenLabel: "", snoozedUntil: null },
+  ];
 }
 
 /**
@@ -315,15 +322,22 @@ export function pickSnoozePreset(input: {
   readonly formatTime?: (date: Date) => string;
 }): SnoozePreset | undefined {
   const original = input.shown.find((preset) => preset.id === input.id);
+  if (original?.id === "never") return original;
   const ahead =
-    original && Date.parse(original.snoozedUntil) > input.now.getTime() ? original : undefined;
+    original?.snoozedUntil != null && Date.parse(original.snoozedUntil) > input.now.getTime()
+      ? original
+      : undefined;
   const setting = (input.presets ?? DEFAULT_SNOOZE_PRESETS).find(
     (candidate) => candidate.kind === "after" && snoozePresetId(candidate) === input.id,
   );
   return (setting && resolveSnoozePreset(setting, input.now, input.formatTime)) ?? ahead;
 }
 
-export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {
+export function snoozeWakeLabel(
+  snoozedUntil: string | null,
+  options: { readonly now: string },
+): string {
+  if (snoozedUntil === null) return "Never";
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(wakeMs) || Number.isNaN(nowMs)) return "now";
@@ -347,6 +361,11 @@ export function resolveCustomSnooze(input: CustomSnoozeInput, now: Date): string
   if (input.mode === "duration") {
     const amount = Number(input.amount);
     if (!Number.isFinite(amount) || amount <= 0) return null;
+    if (
+      input.unit === "days" &&
+      (!Number.isInteger(amount) || amount > MAX_SNOOZE_PRESET_MINUTES / (24 * 60))
+    )
+      return null;
     const unitMs = { minutes: 60_000, hours: HOUR_MS, days: 24 * HOUR_MS }[input.unit];
     wake = new Date(now.getTime() + amount * unitMs);
   } else {

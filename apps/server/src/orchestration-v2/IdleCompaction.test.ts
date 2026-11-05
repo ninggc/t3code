@@ -182,6 +182,11 @@ describe("idleCompactionWindow", () => {
     const archived = records(cache);
     archived.thread = { ...archived.thread, archivedAt: at() };
     expect(idleCompactionWindow(archived, NOW_MS)).toBeNull();
+    const snoozed = records(cache);
+    for (const snoozedUntil of [at(60 * MINUTE_MS), null]) {
+      snoozed.thread = { ...snoozed.thread, snoozedAt: at(), snoozedUntil };
+      expect(idleCompactionWindow(snoozed, NOW_MS)).toBeNull();
+    }
     const sideChat = records(cache);
     expect(idleCompactionWindow(sideChat, NOW_MS)).not.toBeNull();
     sideChat.thread = {

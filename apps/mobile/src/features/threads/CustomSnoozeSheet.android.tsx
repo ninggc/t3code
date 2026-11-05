@@ -1,4 +1,5 @@
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { MAX_SNOOZE_PRESET_MINUTES } from "@t3tools/contracts/settings";
 import {
   BasicAlertDialog,
   Column,
@@ -76,6 +77,7 @@ export function CustomSnoozeSheet(props: Props) {
   const [picker, setPicker] = useState<"date" | "time">("date");
   const [amount, setAmount] = useState(2);
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
+  const maxAmount = unit === "days" ? MAX_SNOOZE_PRESET_MINUTES / (24 * 60) : 99;
   const [error, setError] = useState<string | null>(null);
   const submit = () => {
     const input: CustomSnoozeInput =
@@ -85,7 +87,11 @@ export function CustomSnoozeSheet(props: Props) {
     const snoozedUntil = resolveCustomSnooze(input, new Date());
     if (!snoozedUntil) {
       setError(
-        mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration.",
+        mode === "date"
+          ? "Choose a date and time in the future."
+          : unit === "days"
+            ? "Enter a whole number of days from 1 to 365."
+            : "Enter a positive duration.",
       );
       return;
     }
@@ -221,8 +227,8 @@ export function CustomSnoozeSheet(props: Props) {
                       {String(amount)}
                     </Text>
                     <FilledTonalIconButton
-                      enabled={amount < 99}
-                      onClick={() => setAmount((current) => Math.min(99, current + 1))}
+                      enabled={amount < maxAmount}
+                      onClick={() => setAmount((current) => Math.min(maxAmount, current + 1))}
                       colors={{
                         containerColor: colors["--color-secondary"],
                         contentColor: colors["--color-secondary-foreground"],
@@ -237,7 +243,10 @@ export function CustomSnoozeSheet(props: Props) {
                       variant="card"
                       options={units}
                       selected={unit}
-                      onSelect={setUnit}
+                      onSelect={(value) => {
+                        setUnit(value);
+                        if (value !== "days") setAmount((current) => Math.min(99, current));
+                      }}
                     />
                   </RNHostView>
                 </Column>

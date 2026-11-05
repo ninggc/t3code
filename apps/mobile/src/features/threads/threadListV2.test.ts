@@ -278,13 +278,19 @@ describe("getThreadListV2OrderedSection", () => {
 
 describe("buildThreadListV2Items", () => {
   it("hides snoozed threads and counts them — visibility parity with web", () => {
-    const layout = buildThreadListV2Items({
+    const input = {
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "Active" }),
         makeThread({
           id: ThreadId.make("snoozed"),
           title: "Snoozed",
           snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("never"),
+          title: "Never",
+          snoozedUntil: null,
           snoozedAt: "2026-06-01T12:00:00.000Z",
         }),
         makeThread({
@@ -297,10 +303,19 @@ describe("buildThreadListV2Items", () => {
       environmentId: null,
       searchQuery: "",
       now: NOW,
-    });
+    };
+    const layout = buildThreadListV2Items(input);
 
     expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
-    expect(layout.snoozedCount).toBe(1);
+    expect(layout.snoozedCount).toBe(2);
+    const expanded = buildThreadListV2Items({ ...input, snoozedShelfExpanded: true });
+    expect(expanded.items.filter((item) => item.snoozed).map((item) => item.thread.id)).toEqual([
+      "snoozed",
+      "never",
+    ]);
+    const searched = buildThreadListV2Items({ ...input, searchQuery: "Never" });
+    expect(searched.items.map((item) => item.thread.id)).toEqual(["never"]);
+    expect(searched.nextSnoozeWakeAt).toBeNull();
   });
 
   it("moves a settled pinned thread into the settled shelf — parity with web (#7969)", () => {
