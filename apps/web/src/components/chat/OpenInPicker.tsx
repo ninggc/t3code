@@ -7,6 +7,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { memo, use, useRef } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { OPEN_FAVORITE_EDITOR_ATTRIBUTE } from "./OpenInPickerShortcut";
@@ -27,6 +28,7 @@ import {
   MenuItem,
   MenuItemLabel,
   MenuPopup,
+  MenuSeparator,
   MenuShortcut,
   MenuSub,
   MenuSubTrigger,
@@ -230,6 +232,13 @@ export const OpenInPicker = memo(function OpenInPicker({
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
+  const openCustomEditorMutation = useAtomCommand(
+    shellEnvironment.openInCustomEditor,
+    "run custom open command",
+  );
+  const canRunCustomEditor = useAtomValue(
+    shellEnvironment.openInCustomEditor.permissionAtom(environmentId),
+  );
   const remote = useRemoteOpenState(environmentId);
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const isHostEditorDenied = remote.mode === "local-exec" && !canOperateHost;
@@ -237,7 +246,11 @@ export const OpenInPicker = memo(function OpenInPicker({
   const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
   const remoteCapableEditors = useRemoteCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
-  const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
+  const environment = useEnvironment(environmentId);
+  const environmentLabel = environment?.label ?? "this machine";
+  const customEditors = openInCwdIsFile
+    ? []
+    : (environment?.serverConfig?.settings.customOpenIn ?? []);
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
@@ -324,6 +337,30 @@ export const OpenInPicker = memo(function OpenInPicker({
               Opens over SSH. Needs your key on {environmentLabel}
             </MenuItem>
           )}
+        </>
+      )}
+      {customEditors.length > 0 && (
+        <>
+          <MenuSeparator />
+          {customEditors.map((editor) => (
+            <MenuItem
+              key={editor.id}
+              density={presentation === "menu" ? "touch" : "default"}
+              disabled={!openInCwd || !canRunCustomEditor}
+              onClick={() => {
+                if (!openInCwd) return;
+                void openCustomEditorMutation({
+                  environmentId,
+                  input: { id: editor.id, cwd: openInCwd },
+                });
+              }}
+            >
+              <SquareArrowOutUpRightIcon />
+              <MenuItemLabel>
+                {editor.name} · Run on {environmentLabel}
+              </MenuItemLabel>
+            </MenuItem>
+          ))}
         </>
       )}
     </>

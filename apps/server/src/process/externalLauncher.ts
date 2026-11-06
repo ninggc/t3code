@@ -8,6 +8,7 @@ import {
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
+  CustomEditorLaunchError,
   type EditorId,
   type FileManagerRevealKind,
   type LaunchEditorInput,
@@ -713,10 +714,10 @@ const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSession
   Effect.orElseSucceed((): NodeJS.ProcessEnv => ({})),
 );
 
-const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
+const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* <E>(
   launch: ProcessLaunch,
-  onError: (cause: unknown) => ExternalLauncherError,
-): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
+  onError: (cause: unknown) => E,
+): Effect.fn.Return<void, E, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   // Inherited ELECTRON_RUN_AS_NODE would make Electron apps opened by this launcher run as Node and exit.
   const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = yield* HostProcess.Environment;
@@ -733,6 +734,33 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
     Effect.mapError(onError),
   );
 });
+
+export const launchCustomEditorCommand = Effect.fn("externalLauncher.launchCustomEditorCommand")(
+  function* (input: { readonly id: string; readonly cwd: string; readonly command: string }) {
+    yield* launchAndUnref(
+      {
+        command: input.command,
+        args: [],
+        options: {
+          ...DETACHED_IGNORE_STDIO_OPTIONS,
+          shell: true,
+          cwd: input.cwd,
+          env: {
+            ...(yield* readCommandLookupEnv),
+            ...(yield* readGraphicalSessionEnv()),
+            T3CODE_CWD: input.cwd,
+          },
+        },
+      },
+      (cause) =>
+        new CustomEditorLaunchError({
+          id: input.id,
+          detail: "Failed to launch custom open command.",
+          cause,
+        }),
+    );
+  },
+);
 
 const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(function* (
   target: string,
