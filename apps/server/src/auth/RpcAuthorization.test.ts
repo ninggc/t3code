@@ -133,6 +133,43 @@ describe("RPC scope middleware", () => {
   );
 });
 
+it.effect.each([false, true])(
+  "authorizes custom host commands before execution (operate=%s)",
+  (allowed) =>
+    Effect.gen(function* () {
+      const tag = WS_METHODS.shellOpenInCustomEditor;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (method): method is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof tag> =>
+            method !== tag,
+        ),
+      );
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(tag, () =>
+              Effect.sync(() => {
+                handled = true;
+              }),
+            ),
+            RpcAuthorization.layer(
+              allowed ? [AuthOrchestrationOperateScope] : [AuthOrchestrationReadScope],
+            ),
+          ),
+        ),
+      );
+      const request = client[tag]({ id: "custom", cwd: "/worktree with spaces" });
+      if (allowed) yield* request;
+      else
+        expect(yield* request.pipe(Effect.flip)).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredPermission: AuthOrchestrationOperateScope,
+        });
+      expect(handled).toBe(allowed);
+    }).pipe(Effect.scoped),
+);
+
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(

@@ -39,6 +39,7 @@ import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as CustomEditorLauncher from "./process/CustomEditorLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
@@ -734,7 +735,10 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
-const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+const layerRuntimeDependencies = Layer.provideMerge(
+  CustomEditorLauncher.layer,
+  layerRuntimeCoreDependencies,
+).pipe(
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),

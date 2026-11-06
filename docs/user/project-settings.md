@@ -170,9 +170,18 @@ generation. The same rows edit environment defaults or project overrides dependi
 project crumb.
 
 The Projects category, under Code, holds the project's name, icon, actions,
-checkouts and removal. Actions belong to a project: editing them creates the project's own list
-on each selected environment, and reset returns to the environment's shared list. A project's
-`t3.json` actions can be imported there.
+checkouts and removal. **Settings → Actions** also lets you manage shared actions without selecting
+a project: leave **All projects** selected to edit the environment's defaults, including shortcuts.
+Selecting a project creates its own action list; changing defaults keeps that override intact,
+and reset returns it to the shared list. A project's `t3.json` actions can be imported from its settings.
+
+In **Settings → Actions → Open in**, choose one environment to add a custom application or launch
+command. These commands appear beside built-in editors in the thread's **Open in** menu and run on
+the environment named in the menu, including over a remote connection. They run in the current
+worktree, or the project directory when there is no worktree. Use `.` as a directory argument, or
+`"$T3CODE_CWD"` on macOS/Linux (`"%T3CODE_CWD%"` with Windows cmd), to pass paths containing spaces.
+For example, `open -a "My Editor" "$T3CODE_CWD"` opens a Mac application. Editing commands requires
+settings access; running them requires operate access on that environment.
 
 Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `t3.json`, then the

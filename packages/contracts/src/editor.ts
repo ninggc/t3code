@@ -162,6 +162,28 @@ export const LaunchEditorInput = Schema.Struct({
 });
 export type LaunchEditorInput = typeof LaunchEditorInput.Type;
 
+export const CustomOpenIn = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+});
+export type CustomOpenIn = typeof CustomOpenIn.Type;
+
+export const LaunchCustomEditorInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  id: TrimmedNonEmptyString,
+});
+export type LaunchCustomEditorInput = typeof LaunchCustomEditorInput.Type;
+
+export class CustomEditorLaunchError extends Schema.TaggedError<CustomEditorLaunchError>()(
+  "CustomEditorLaunchError",
+  { id: Schema.String, detail: Schema.String, cause: Schema.optionalKey(Schema.Defect()) },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 const remoteSchemeOf = (editor: EditorDefinition): string | undefined =>
   editor.remoteScheme ?? (editor.jetbrainsProductCode === undefined ? undefined : "jetbrains");
 

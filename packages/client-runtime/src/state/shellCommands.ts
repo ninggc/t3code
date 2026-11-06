@@ -8,6 +8,10 @@ export function createShellEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    openInCustomEditor: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:shell:open-in-custom-editor",
+      tag: WS_METHODS.shellOpenInCustomEditor,
+    }),
     openInEditor: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:shell:open-in-editor",
       tag: WS_METHODS.shellOpenInEditor,

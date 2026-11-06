@@ -1,4 +1,9 @@
-import { AuthOrchestrationOperateScope, EnvironmentId, type EditorId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+  type CustomOpenIn,
+  type EditorId,
+} from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
@@ -16,6 +21,7 @@ const state = vi.hoisted(() => ({
   setPreferred: vi.fn(),
   markHintSeen: vi.fn(),
   listeners: new Set<() => void>(),
+  customEditors: [] as CustomOpenIn[],
 }));
 
 vi.mock(import("../../state/session"), async (importOriginal) => {
@@ -41,8 +47,26 @@ vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
 }));
 vi.mock(import("../../state/environments"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useEnvironment: (() => ({ label: "Test host" })) as never,
+  useEnvironment: (() => ({
+    label: "Test host",
+    serverConfig: { settings: { customOpenIn: state.customEditors } },
+  })) as never,
 }));
+vi.mock(import("../../state/shell"), async (importOriginal) => {
+  const { Atom } = await import("effect/reactivity");
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    shellEnvironment: {
+      ...actual.shellEnvironment,
+      openInCustomEditor: {
+        ...actual.shellEnvironment.openInCustomEditor,
+        permissionAtom: (id: EnvironmentId | null) =>
+          Atom.make(id !== null && state.allowed.has(id)),
+      },
+    },
+  };
+});
 vi.mock(import("../../editorPreferences"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -84,6 +108,7 @@ async function setup() {
   state.setPreferred.mockReset();
   state.markHintSeen.mockReset();
   state.listeners.clear();
+  state.customEditors = [];
   window.localStorage.clear();
 
   await using stack = new AsyncDisposableStack();
@@ -168,6 +193,67 @@ async function setup() {
 }
 
 describe("host editor access", () => {
+  it("runs configured commands on the selected host with intact worktree paths and updates the menu", async () => {
+    await using fixture = await setup();
+    const { renderPicker, byLabel, click, menuItems } = fixture;
+    state.allowed.add(selected);
+    state.customEditors = [{ id: "custom", name: "My editor", command: "editor ." }];
+    for (const remote of [
+      { mode: "local-exec" },
+      { mode: "remote-links", host: { kind: "ssh-alias", host: "remote" } },
+      { mode: "remote-unavailable" },
+    ] as const) {
+      state.remote = remote;
+      await renderPicker(editors, false, { openInCwd: "/worktree with spaces" });
+      await click(byLabel("Choose editor"));
+      await vi.waitFor(() =>
+        expect(
+          menuItems().some((item) => item.textContent?.includes("My editor · Run on Test host")),
+        ).toBe(true),
+      );
+      const item = menuItems().find((item) =>
+        item.textContent?.includes("My editor · Run on Test host"),
+      )!;
+      await click(item);
+      expect(state.run).toHaveBeenLastCalledWith({
+        environmentId: selected,
+        input: { id: "custom", cwd: "/worktree with spaces" },
+      });
+      expect(state.openUrl).not.toHaveBeenCalled();
+    }
+    state.customEditors = [{ id: "custom", name: "Updated editor", command: "other ." }];
+    await renderPicker();
+    await click(byLabel("Choose editor"));
+    await vi.waitFor(() =>
+      expect(menuItems().some((item) => item.textContent?.includes("Updated editor"))).toBe(true),
+    );
+    state.customEditors = [];
+    await renderPicker(editors, false, { openInCwd: "/work/other-project" });
+    expect(menuItems().some((item) => item.textContent?.includes("Updated editor"))).toBe(false);
+  });
+
+  it("disables custom host execution without the selected grant while preserving remote editor links", async () => {
+    await using fixture = await setup();
+    const { renderPicker, byLabel, click, menuItems } = fixture;
+    state.allowed.add(primary);
+    state.customEditors = [{ id: "custom", name: "My editor", command: "editor ." }];
+    state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "remote" } };
+    await renderPicker();
+    await click(byLabel("Choose editor"));
+    await vi.waitFor(() =>
+      expect(menuItems().some((item) => item.textContent?.includes("My editor"))).toBe(true),
+    );
+    expect(menuItems().find((item) => item.textContent?.includes("My editor"))).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(menuItems().find((item) => item.textContent?.includes("VS Code"))).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(state.run).not.toHaveBeenCalled();
+  });
+
   it("uses the selected grant for both the button and a retained shortcut", async () => {
     await using fixture = await setup();
     const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;
