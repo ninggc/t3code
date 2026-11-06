@@ -14,10 +14,13 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -120,6 +123,8 @@ function createThread(input: {
   readonly command: string;
   readonly thread: string;
   readonly worktreePath?: string;
+  readonly projectId?: ProjectId;
+  readonly title?: string;
 }) {
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
@@ -128,8 +133,8 @@ function createThread(input: {
       type: "thread.create",
       commandId: CommandId.make(input.command),
       threadId,
-      projectId,
-      title: "Seed title",
+      projectId: input.projectId ?? projectId,
+      title: input.title ?? "Seed title",
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
@@ -283,6 +288,128 @@ describe("formatThreadTitleContext", () => {
 });
 
 describe("ThreadTitleRegenerationService", () => {
+  it.effect("uses bounded titles from other threads in the same project for both title paths", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () => Effect.succeed({ title: "会话管理 - Snooze 长期挂起" }),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        for (let index = 0; index < 45; index++) {
+          yield* createThread({
+            command: `topic:history:${index}:create`,
+            thread: `topic:history:${index}`,
+            title: `主题 ${index} - 历史会话`,
+          });
+        }
+        yield* createThread({
+          command: "topic:long:create",
+          thread: "topic:long",
+          title: `参考主题 - ${"长标题".repeat(100)}`,
+        });
+        yield* createThread({
+          command: "topic:related:create",
+          thread: "topic:related",
+          title: "会话管理 - 会话搜索",
+        });
+        yield* createThread({
+          command: "topic:duplicate:create",
+          thread: "topic:duplicate",
+          title: "会话管理 - 会话搜索",
+        });
+        yield* createThread({
+          command: "topic:other-project:create",
+          thread: "topic:other-project",
+          projectId: ProjectId.make("project:other"),
+          title: "其他项目 - 登录问题",
+        });
+        for (const kind of ["initial", "regenerate"] as const) {
+          const threadId = yield* createThread({
+            command: `topic:${kind}:create`,
+            thread: `topic:${kind}`,
+            title: "待定 - 修复挂起",
+          });
+          yield* dispatchUserMessage({
+            command: `topic:${kind}:message`,
+            threadId,
+            text: "Snooze 支持永不自动唤醒",
+          });
+          const requestId = yield* armRegeneration({ command: `topic:${kind}:title`, threadId });
+          yield* service.execute({
+            threadId,
+            requestId,
+            kind:
+              kind === "initial"
+                ? { type: kind, messageId: MessageId.make(`topic:${kind}:message:message`) }
+                : { type: kind },
+          });
+          const call = harness.generateThreadTitle.mock.lastCall?.[0];
+          assert.include(call?.relatedTitles ?? [], "会话管理 - 会话搜索");
+          assert.notInclude(call?.relatedTitles ?? [], "其他项目 - 登录问题");
+          assert.notInclude(call?.relatedTitles ?? [], "待定 - 修复挂起");
+          assert.equal(
+            call?.relatedTitles?.filter((title) => title === "会话管理 - 会话搜索").length,
+            1,
+          );
+          assert.isAtMost(call?.relatedTitles?.length ?? Infinity, 40);
+          assert.isTrue(call?.relatedTitles?.every((title) => title.length <= 120));
+          const projection = yield* threads.getThreadProjection(threadId);
+          assert.equal(projection.thread.title, "会话管理 - Snooze 长期挂起");
+        }
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("still generates a title when the project title lookup fails or times out", () =>
+    Effect.gen(function* () {
+      for (const mode of ["failure", "timeout"] as const) {
+        const harness = makeHarness({
+          generateTitle: () => Effect.succeed({ title: "会话管理 - 长期挂起" }),
+        });
+        yield* Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+          const threadId = yield* createThread({
+            command: `lookup:${mode}:create`,
+            thread: `lookup:${mode}`,
+          });
+          yield* dispatchUserMessage({
+            command: `lookup:${mode}:message`,
+            threadId,
+            text: "Snooze 支持永不自动唤醒",
+          });
+          const requestId = yield* armRegeneration({ command: `lookup:${mode}:title`, threadId });
+          const started = yield* Deferred.make<void>();
+          using _lookup = vi.spyOn(threads, "listProjectThreads").mockReturnValue(
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(
+                mode === "failure"
+                  ? Effect.fail(
+                      new ThreadManagement.ThreadManagementProjectThreadsListError({
+                        projectId,
+                        cause: new Error("lookup unavailable"),
+                      }),
+                    )
+                  : Effect.never,
+              ),
+            ),
+          );
+          const fiber = yield* service
+            .execute({ threadId, requestId, kind: { type: "regenerate" } })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          if (mode === "timeout") yield* TestClock.adjust("1 second");
+          yield* Fiber.join(fiber);
+          assert.deepEqual(harness.generateThreadTitle.mock.lastCall?.[0]?.relatedTitles, []);
+          const projection = yield* threads.getThreadProjection(threadId);
+          assert.equal(projection.thread.title, "会话管理 - 长期挂起");
+          assert.isNotOk(projection.thread.titleRegeneration);
+        }).pipe(Effect.provide(harness.layer));
+      }
+    }),
+  );
+
   it.effect(
     "titles an image-only first message without sending bootstrap text to the title model",
     () =>
@@ -349,7 +476,7 @@ describe("ThreadTitleRegenerationService", () => {
         const abandoned = yield* threads.getThreadProjection(threadId);
         assert.isNotOk(abandoned.thread.titleRegeneration);
 
-        yield* armRegeneration({ command: "command:title:arm:2", threadId });
+        const secondRequest = yield* armRegeneration({ command: "command:title:arm:2", threadId });
         yield* threads.dispatch({
           type: "thread.metadata.update",
           commandId: CommandId.make("command:title:arm:rename"),
@@ -359,6 +486,14 @@ describe("ThreadTitleRegenerationService", () => {
         const renamed = yield* threads.getThreadProjection(threadId);
         assert.equal(renamed.thread.title, "Manual title");
         assert.isNotOk(renamed.thread.titleRegeneration);
+        yield* threads.dispatch({
+          type: "thread.title.regeneration.complete",
+          commandId: CommandId.make("command:title:arm:late-complete"),
+          threadId,
+          requestId: secondRequest,
+          title: "会话管理 - 过期生成结果",
+        });
+        assert.equal((yield* threads.getThreadProjection(threadId)).thread.title, "Manual title");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

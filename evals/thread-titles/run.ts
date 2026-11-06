@@ -35,12 +35,19 @@ const { values } = NodeUtil.parseArgs({
     out: { type: "string" },
     baseline: { type: "string" },
     initial: { type: "boolean", default: false },
+    case: { type: "string" },
   },
 });
 if (!values.model || !values.out)
   throw new Error("Use --model <configured-model> --out <directory>.");
 const model = values.model;
 const outputDirectory = values.out;
+const selectedIds = values.case?.split(",");
+const cases = threadTitleEvaluationCases.filter(
+  (fixture) => selectedIds === undefined || selectedIds.includes(fixture.id),
+);
+if (selectedIds?.some((id) => !cases.some((fixture) => fixture.id === id)))
+  throw new Error("Unknown thread title evaluation case.");
 const Results = Schema.fromJsonString(
   Schema.Array(
     Schema.Struct({
@@ -69,7 +76,7 @@ await Effect.runPromise(
     const results = [];
     const review = [];
     const answerKey = [];
-    for (const fixture of threadTitleEvaluationCases) {
+    for (const fixture of cases) {
       const previous = baseline.find((entry) => entry.id === fixture.id);
       if (values.baseline && !previous) throw new Error(`Baseline is missing ${fixture.id}.`);
       const firstMessage: ThreadTitleMessage | undefined = fixture.messages.find(
@@ -96,6 +103,7 @@ await Effect.runPromise(
           cwd,
           message,
           previousTitle: values.initial ? undefined : fixture.previousTitle,
+          relatedTitles: "relatedTitles" in fixture ? fixture.relatedTitles : undefined,
           attachments,
           linkedContext,
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model },
