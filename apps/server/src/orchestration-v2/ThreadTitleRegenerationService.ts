@@ -24,7 +24,10 @@ import type { OrchestratorV2Error } from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
-import { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
+import {
+  formatThreadTitleContext,
+  limitTitleMessage,
+} from "@t3tools/provider-core/server/threadTitleContext";
 export { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
 
 export class ThreadTitleRegenerationService extends Context.Service<
@@ -162,6 +165,26 @@ const make = Effect.gen(function* () {
         yield* serverSettings.getSettings,
         projection.thread.projectId,
       ).settings;
+      const relatedTitles = yield* threads
+        .listProjectThreads({ projectId: projection.thread.projectId, includeSubagents: false })
+        .pipe(
+          Effect.map((candidates) =>
+            [
+              ...new Set(
+                candidates
+                  .filter((thread) => thread.id !== input.threadId)
+                  .map((thread) => thread.title.trim())
+                  .filter(
+                    (title) => title && title !== "New thread" && !title.startsWith("待定 - "),
+                  )
+                  .map((title) => limitTitleMessage(title, 120)),
+              ),
+            ].slice(0, 40),
+          ),
+          Effect.timeoutOption("1 second"),
+          Effect.map(Option.getOrElse((): ReadonlyArray<string> => [])),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
+        );
       // Storage cleanup removes worktrees but keeps the path; CLIs cannot spawn in a missing cwd.
       const worktreePath = projection.thread.worktreePath;
       const worktreeExists =
@@ -171,6 +194,7 @@ const make = Effect.gen(function* () {
         cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
         message: context.message,
         attachments: context.attachments,
+        relatedTitles,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         ...(inherited === undefined ? {} : { forkSource: inherited }),
         instructions: settings.threadTitleInstructions,

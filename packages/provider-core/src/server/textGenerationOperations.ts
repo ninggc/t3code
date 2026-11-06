@@ -143,14 +143,22 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       ...buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
+        relatedTitles: input.relatedTitles,
         forkSource: input.forkSource,
         linkedContext: input.linkedContext,
         attachments: input.attachments,
         instructions: input.instructions,
       }),
     });
+    const previousTitle = input.previousTitle?.trim();
     return {
-      title: sanitizeThreadTitle(generated.title),
+      title:
+        generated.preservePreviousTitle &&
+        previousTitle &&
+        /^[^\n]+ - [^\n]+$/.test(previousTitle) &&
+        !previousTitle.startsWith("待定 - ")
+          ? previousTitle
+          : sanitizeThreadTitle(generated.title),
       ...(generated.needsRefinement ? { needsRefinement: true } : {}),
     };
   });

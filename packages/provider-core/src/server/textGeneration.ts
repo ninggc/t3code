@@ -61,6 +61,7 @@ export interface ThreadTitleGenerationInput {
   cwd: string;
   message: string;
   previousTitle?: string | undefined;
+  relatedTitles?: ReadonlyArray<string> | undefined;
   forkSource?: ThreadTitleForkSource | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   instructions?: string | undefined;
