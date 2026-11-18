@@ -132,6 +132,8 @@ jobs:
           macOS arm64 build for Apple Silicon Macs, without Developer ID signing or notarization.
 
           Source commit: ${GITHUB_SHA}
+          Installs as T3 Code (Custom).app alongside the official app and reuses its local data and login storage.
+          Quit the other version before opening this one. Back up your T3 home before switching versions; database upgrades may prevent returning to an older version. macOS may request Keychain access again.
           Install using the DMG or ZIP. SHA256SUMS contains the download checksums.
           This preview is installed manually and does not configure automatic app updates.
           EOF

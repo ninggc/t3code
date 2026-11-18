@@ -496,47 +496,68 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
-  it.effect("omits update feeds for pull request preview builds", () =>
+  it.effect("separates custom macOS installs from official apps and update feeds", () =>
     Effect.gen(function* () {
-      const preview = yield* createBuildConfig(
-        "mac",
-        "dmg",
+      for (const version of [
         "0.0.33-pr.8182.1",
-        false,
-        false,
-        undefined,
-        undefined,
-      );
-      const release = yield* createBuildConfig(
+        "0.0.33",
+        "0.0.41-preview.20260912.1589",
+        "0.0.41-nightly.20260912.1589",
+      ]) {
+        const config = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          version,
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+        assert.equal(config.appId, "com.t3tools.t3code.custom");
+        assert.equal(config.productName, "T3 Code (Custom)");
+        assert.equal(config.artifactName, "T3-Code-Custom-${version}-${arch}.${ext}");
+        assert.isNull(config.publish);
+        assert.deepInclude(config.dmg, { title: `T3 Code (Custom) ${version} Installer` });
+      }
+
+      const mockUpdate = yield* createBuildConfig(
         "mac",
         "dmg",
         "0.0.33",
         false,
-        false,
-        undefined,
-        undefined,
-      );
-
-      const previewChannel = yield* createBuildConfig(
-        "mac",
-        "dmg",
-        "0.0.41-preview.20260912.1589",
-        false,
-        false,
-        undefined,
+        true,
+        4321,
         undefined,
       );
-
-      assert.isNull(preview.publish);
-      assert.isNull(previewChannel.publish);
-      assert.deepStrictEqual(release.publish, [
-        {
-          provider: "github",
-          owner: "pingdotgg",
-          repo: "t3code",
-          releaseType: "release",
-        },
+      assert.deepStrictEqual(mockUpdate.publish, [
+        { provider: "generic", url: "http://localhost:4321" },
       ]);
+
+      for (const [platform, target] of [
+        ["win", "nsis"],
+        ["linux", "AppImage"],
+      ] as const) {
+        const release = yield* createBuildConfig(
+          platform,
+          target,
+          "0.0.33",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+        assert.equal(release.appId, "com.t3tools.t3code");
+        assert.equal(release.productName, "T3 Code (Beta)");
+        assert.equal(release.artifactName, "T3-Code-${version}-${arch}.${ext}");
+        assert.deepStrictEqual(release.publish, [
+          {
+            provider: "github",
+            owner: "pingdotgg",
+            repo: "t3code",
+            releaseType: "release",
+          },
+        ]);
+      }
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(
@@ -1393,7 +1414,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
 
     assert.deepStrictEqual(configuration, {
-      appId: "com.t3tools.t3code",
+      appId: "com.t3tools.t3code.custom",
       teamId: "ABC1234567",
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
@@ -1416,7 +1437,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "clerk.example.com",
       "example.clerk.accounts.dev",
     ]);
-    assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
+    assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code.custom</string>");
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
